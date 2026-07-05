@@ -18,6 +18,7 @@ echo "======================================"
 echo " VLESS + Reality + Vision + TCP 一键脚本"
 echo " 随机端口范围：${RANDOM_PORT_MIN}-${RANDOM_PORT_MAX}"
 echo " 支持：绿色二维码 + BBR + 上海时间 + IP地区自动命名"
+echo " 节点格式：国家-地区-城市-IP"
 echo " 适用于 Ubuntu / Debian"
 echo "======================================"
 echo ""
@@ -155,20 +156,15 @@ generate_node_name_by_ipinfo() {
   CLEAN_COUNTRY=$(sanitize_name "$IP_COUNTRY")
   CLEAN_REGION=$(sanitize_name "$IP_REGION")
   CLEAN_CITY=$(sanitize_name "$IP_CITY")
+  CLEAN_IP=$(sanitize_name "$PUBLIC_IP")
 
-  IP_LAST_TWO=$(echo "$PUBLIC_IP" | awk -F'.' '{print $(NF-1)"."$NF}')
-
-  if [ -z "$IP_LAST_TWO" ]; then
-    IP_LAST_TWO="$PUBLIC_IP"
-  fi
-
-  AUTO_NODE_NAME="REALITY-${CLEAN_COUNTRY}-${CLEAN_CITY}-${IP_LAST_TWO}"
-
-  if [ -z "$CLEAN_CITY" ] || [ "$CLEAN_CITY" = "UnknownCity" ]; then
-    AUTO_NODE_NAME="REALITY-${CLEAN_COUNTRY}-${CLEAN_REGION}-${IP_LAST_TWO}"
-  fi
-
-  if [ -z "$AUTO_NODE_NAME" ]; then
+  if [ -n "$CLEAN_COUNTRY" ] && [ -n "$CLEAN_REGION" ] && [ -n "$CLEAN_CITY" ] && [ -n "$CLEAN_IP" ]; then
+    AUTO_NODE_NAME="${CLEAN_COUNTRY}-${CLEAN_REGION}-${CLEAN_CITY}-${CLEAN_IP}"
+  elif [ -n "$CLEAN_COUNTRY" ] && [ -n "$CLEAN_CITY" ] && [ -n "$CLEAN_IP" ]; then
+    AUTO_NODE_NAME="${CLEAN_COUNTRY}-${CLEAN_CITY}-${CLEAN_IP}"
+  elif [ -n "$CLEAN_COUNTRY" ] && [ -n "$CLEAN_IP" ]; then
+    AUTO_NODE_NAME="${CLEAN_COUNTRY}-${CLEAN_IP}"
+  else
     AUTO_NODE_NAME="$DEFAULT_NODE_NAME"
   fi
 }
