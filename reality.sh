@@ -17,7 +17,7 @@ clear
 echo "======================================"
 echo " VLESS + Reality + Vision + TCP 一键脚本"
 echo " 随机端口范围：${RANDOM_PORT_MIN}-${RANDOM_PORT_MAX}"
-echo " 支持绿色二维码 + BBR + 上海时间"
+echo " 支持：绿色二维码 + BBR + 上海时间 + IP地区自动命名"
 echo " 适用于 Ubuntu / Debian"
 echo "======================================"
 echo ""
@@ -52,7 +52,7 @@ install_base_packages() {
   echo "正在安装基础依赖..."
 
   apt update -y
-  apt install -y curl wget unzip socat cron ufw net-tools iproute2 procps openssl ca-certificates qrencode
+  apt install -y curl wget unzip socat cron ufw net-tools iproute2 procps openssl ca-certificates qrencode jq
 }
 
 set_shanghai_time() {
@@ -109,22 +109,68 @@ random_short_id() {
   openssl rand -hex 8
 }
 
-get_public_ip() {
-  IP=$(curl -4 -s --max-time 8 https://api.ipify.org || true)
+sanitize_name() {
+  echo "$1" | tr ' ' '-' | tr -cd 'A-Za-z0-9._-'
+}
 
-  if [ -z "$IP" ]; then
-    IP=$(curl -4 -s --max-time 8 https://ipv4.icanhazip.com || true)
+get_ipinfo() {
+  IPINFO_JSON=$(curl -4 -s --max-time 10 https://ipinfo.io/json || true)
+
+  PUBLIC_IP=""
+  IP_COUNTRY=""
+  IP_REGION=""
+  IP_CITY=""
+
+  if command -v jq >/dev/null 2>&1 && [ -n "$IPINFO_JSON" ]; then
+    PUBLIC_IP=$(echo "$IPINFO_JSON" | jq -r '.ip // empty')
+    IP_COUNTRY=$(echo "$IPINFO_JSON" | jq -r '.country // empty')
+    IP_REGION=$(echo "$IPINFO_JSON" | jq -r '.region // empty')
+    IP_CITY=$(echo "$IPINFO_JSON" | jq -r '.city // empty')
   fi
 
-  if [ -z "$IP" ]; then
-    IP=$(curl -4 -s --max-time 8 https://ifconfig.me || true)
+  if [ -z "$PUBLIC_IP" ]; then
+    PUBLIC_IP=$(curl -4 -s --max-time 8 https://api.ipify.org || true)
   fi
 
-  if [ -z "$IP" ]; then
-    IP=$(hostname -I | awk '{print $1}')
+  if [ -z "$PUBLIC_IP" ]; then
+    PUBLIC_IP=$(curl -4 -s --max-time 8 https://ipv4.icanhazip.com || true)
   fi
 
-  echo "$IP"
+  if [ -z "$PUBLIC_IP" ]; then
+    PUBLIC_IP=$(curl -4 -s --max-time 8 https://ifconfig.me || true)
+  fi
+
+  if [ -z "$PUBLIC_IP" ]; then
+    PUBLIC_IP=$(hostname -I | awk '{print $1}')
+  fi
+
+  IP_COUNTRY=${IP_COUNTRY:-UnknownCountry}
+  IP_REGION=${IP_REGION:-UnknownRegion}
+  IP_CITY=${IP_CITY:-UnknownCity}
+}
+
+generate_node_name_by_ipinfo() {
+  get_ipinfo
+
+  CLEAN_COUNTRY=$(sanitize_name "$IP_COUNTRY")
+  CLEAN_REGION=$(sanitize_name "$IP_REGION")
+  CLEAN_CITY=$(sanitize_name "$IP_CITY")
+
+  IP_LAST_TWO=$(echo "$PUBLIC_IP" | awk -F'.' '{print $(NF-1)"."$NF}')
+
+  if [ -z "$IP_LAST_TWO" ]; then
+    IP_LAST_TWO="$PUBLIC_IP"
+  fi
+
+  AUTO_NODE_NAME="REALITY-${CLEAN_COUNTRY}-${CLEAN_CITY}-${IP_LAST_TWO}"
+
+  if [ -z "$CLEAN_CITY" ] || [ "$CLEAN_CITY" = "UnknownCity" ]; then
+    AUTO_NODE_NAME="REALITY-${CLEAN_COUNTRY}-${CLEAN_REGION}-${IP_LAST_TWO}"
+  fi
+
+  if [ -z "$AUTO_NODE_NAME" ]; then
+    AUTO_NODE_NAME="$DEFAULT_NODE_NAME"
+  fi
 }
 
 validate_port() {
@@ -369,7 +415,8 @@ show_qrcode() {
 }
 
 show_result() {
-  IP=$(get_public_ip)
+  get_ipinfo
+  IP="$PUBLIC_IP"
   url_encode_node_name
 
   VLESS_URL="vless://$UUID@$IP:$VLESS_PORT?encryption=none&security=reality&flow=xtls-rprx-vision&type=tcp&sni=$SNI_DOMAIN&pbk=$PUBLIC_KEY&sid=$SHORT_ID&fp=$FINGERPRINT#$NODE_NAME_ENCODED"
@@ -384,6 +431,9 @@ show_result() {
   echo " VLESS + Reality + Vision 安装完成"
   echo "======================================"
   echo "服务器 IP：$IP"
+  echo "识别国家：$IP_COUNTRY"
+  echo "识别地区：$IP_REGION"
+  echo "识别城市：$IP_CITY"
   echo "端口：$VLESS_PORT"
   echo "UUID：$UUID"
   echo "协议：VLESS"
@@ -449,7 +499,8 @@ show_result() {
   echo "1. Reality + Vision + TCP 只需要放行 TCP 端口"
   echo "2. 如果客户端连不上，请检查 VPS 云后台安全组是否放行 TCP $VLESS_PORT"
   echo "3. 如果二维码不好扫，请放大终端窗口，或者复制 VLESS 分享链接导入"
-  echo "4. BBR 是网络优化，不是换线路；线路本身差，BBR 也救不了全部问题"
+  echo "4. 节点地区来自 ipinfo.io，仅供参考，最终以实际出口检测为准"
+  echo "5. BBR 是网络优化，不是换线路；线路本身差，BBR 也救不了全部问题"
   echo "======================================"
 }
 
@@ -462,26 +513,28 @@ install_reality() {
   echo ""
   echo "请选择安装模式："
   echo "1) 自定义端口 / SNI / 指纹 / 节点名称"
-  echo "2) 随机端口 / 默认 SNI"
+  echo "2) 随机端口 / 默认 SNI / 自动节点名"
   echo ""
 
   read -p "请输入选项 [1/2]，默认 2: " MODE
   MODE=${MODE:-2}
 
+  generate_node_name_by_ipinfo
+
   if [ "$MODE" = "1" ]; then
     read -p "请输入端口，必须 >=10000，例如 31566: " VLESS_PORT
     read -p "请输入 SNI 域名，默认 $DEFAULT_SNI: " SNI_DOMAIN
     read -p "请输入浏览器指纹，默认 $DEFAULT_FP: " FINGERPRINT
-    read -p "请输入节点名称，默认 $DEFAULT_NODE_NAME: " NODE_NAME
+    read -p "请输入节点名称，默认 $AUTO_NODE_NAME: " NODE_NAME
 
     SNI_DOMAIN=${SNI_DOMAIN:-$DEFAULT_SNI}
     FINGERPRINT=${FINGERPRINT:-$DEFAULT_FP}
-    NODE_NAME=${NODE_NAME:-$DEFAULT_NODE_NAME}
+    NODE_NAME=${NODE_NAME:-$AUTO_NODE_NAME}
   else
     VLESS_PORT=$(random_port)
     SNI_DOMAIN="$DEFAULT_SNI"
     FINGERPRINT="$DEFAULT_FP"
-    NODE_NAME="$DEFAULT_NODE_NAME"
+    NODE_NAME="$AUTO_NODE_NAME"
   fi
 
   validate_port "$VLESS_PORT"
@@ -500,11 +553,20 @@ install_reality() {
 }
 
 show_status() {
+  get_ipinfo
+
   echo "======================================"
   echo " Xray Reality 状态"
   echo "======================================"
 
   systemctl status "$SERVICE_NAME" --no-pager || true
+
+  echo ""
+  echo "IP 信息："
+  echo "服务器 IP：$PUBLIC_IP"
+  echo "识别国家：$IP_COUNTRY"
+  echo "识别地区：$IP_REGION"
+  echo "识别城市：$IP_CITY"
 
   echo ""
   echo "监听端口："
