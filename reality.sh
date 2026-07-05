@@ -17,6 +17,7 @@ clear
 echo "======================================"
 echo " VLESS + Reality + Vision + TCP 一键脚本"
 echo " 随机端口范围：${RANDOM_PORT_MIN}-${RANDOM_PORT_MAX}"
+echo " 支持二维码显示"
 echo " 适用于 Ubuntu / Debian"
 echo "======================================"
 echo ""
@@ -51,7 +52,7 @@ install_base_packages() {
   echo "正在安装基础依赖..."
 
   apt update -y
-  apt install -y curl wget unzip socat cron ufw net-tools iproute2 procps openssl ca-certificates
+  apt install -y curl wget unzip socat cron ufw net-tools iproute2 procps openssl ca-certificates qrencode
 }
 
 install_xray() {
@@ -297,6 +298,16 @@ url_encode_node_name() {
   NODE_NAME_ENCODED=$(printf '%s' "$NODE_NAME" | sed 's/ /%20/g')
 }
 
+show_qrcode() {
+  QR_CONTENT="$1"
+
+  if command -v qrencode >/dev/null 2>&1; then
+    echo "$QR_CONTENT" | qrencode -t ANSIUTF8
+  else
+    echo "未安装 qrencode，无法显示二维码"
+  fi
+}
+
 show_result() {
   IP=$(get_public_ip)
   url_encode_node_name
@@ -322,6 +333,9 @@ show_result() {
   echo ""
   echo "VLESS 分享链接："
   echo "$VLESS_URL"
+  echo ""
+  echo "VLESS 二维码："
+  show_qrcode "$VLESS_URL"
   echo ""
   echo "Shadowrocket 手动填写："
   echo "类型：VLESS"
