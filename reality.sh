@@ -17,7 +17,7 @@ clear
 echo "======================================"
 echo " VLESS + Reality + Vision + TCP 一键脚本"
 echo " 随机端口范围：${RANDOM_PORT_MIN}-${RANDOM_PORT_MAX}"
-echo " 支持二维码显示"
+echo " 支持绿色二维码 + BBR + 上海时间"
 echo " 适用于 Ubuntu / Debian"
 echo "======================================"
 echo ""
@@ -53,6 +53,31 @@ install_base_packages() {
 
   apt update -y
   apt install -y curl wget unzip socat cron ufw net-tools iproute2 procps openssl ca-certificates qrencode
+}
+
+set_shanghai_time() {
+  echo ""
+  echo "正在设置系统时区为 Asia/Shanghai..."
+
+  timedatectl set-timezone Asia/Shanghai 2>/dev/null || true
+  timedatectl set-ntp true 2>/dev/null || true
+
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl enable systemd-timesyncd >/dev/null 2>&1 || true
+    systemctl restart systemd-timesyncd 2>/dev/null || true
+  fi
+
+  CURRENT_TIMEZONE=$(timedatectl 2>/dev/null | grep "Time zone" | awk -F': ' '{print $2}' || echo "unknown")
+  CURRENT_TIME=$(date "+%Y-%m-%d %H:%M:%S")
+
+  echo "当前时区：$CURRENT_TIMEZONE"
+  echo "当前时间：$CURRENT_TIME"
+
+  if timedatectl 2>/dev/null | grep -q "Asia/Shanghai"; then
+    echo "上海时间设置成功"
+  else
+    echo "提醒：时区设置可能未成功，请手动检查：timedatectl"
+  fi
 }
 
 install_xray() {
@@ -141,6 +166,32 @@ open_firewall_port() {
   fi
 
   echo "提醒：如果 VPS 云后台有安全组，也要手动放行 TCP $PORT_TO_OPEN"
+}
+
+enable_bbr() {
+  echo ""
+  echo "正在开启 BBR..."
+
+  modprobe tcp_bbr 2>/dev/null || true
+
+  cat > /etc/sysctl.d/99-bbr.conf <<EOF
+net.core.default_qdisc=fq
+net.ipv4.tcp_congestion_control=bbr
+EOF
+
+  sysctl --system >/dev/null 2>&1 || true
+
+  CURRENT_CC=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo unknown)
+  CURRENT_QDISC=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo unknown)
+
+  echo "当前拥塞控制算法：$CURRENT_CC"
+  echo "当前队列算法：$CURRENT_QDISC"
+
+  if [ "$CURRENT_CC" = "bbr" ]; then
+    echo "BBR 已成功开启"
+  else
+    echo "提醒：BBR 未成功开启，可能是内核或 VPS 限制"
+  fi
 }
 
 generate_uuid() {
@@ -302,7 +353,16 @@ show_qrcode() {
   QR_CONTENT="$1"
 
   if command -v qrencode >/dev/null 2>&1; then
-    echo "$QR_CONTENT" | qrencode -t ANSIUTF8
+    echo ""
+    echo "请用手机代理软件扫码导入："
+    echo ""
+
+    echo -e "\033[32m"
+    echo "$QR_CONTENT" | qrencode -t ANSIUTF8 -m 2
+    echo -e "\033[0m"
+
+    echo ""
+    echo "如果二维码太大或显示不完整，请放大终端窗口后重新运行。"
   else
     echo "未安装 qrencode，无法显示二维码"
   fi
@@ -313,6 +373,11 @@ show_result() {
   url_encode_node_name
 
   VLESS_URL="vless://$UUID@$IP:$VLESS_PORT?encryption=none&security=reality&flow=xtls-rprx-vision&type=tcp&sni=$SNI_DOMAIN&pbk=$PUBLIC_KEY&sid=$SHORT_ID&fp=$FINGERPRINT#$NODE_NAME_ENCODED"
+
+  BBR_CC=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo unknown)
+  BBR_QDISC=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo unknown)
+  SYSTEM_TIME=$(date "+%Y-%m-%d %H:%M:%S")
+  SYSTEM_TIMEZONE=$(timedatectl 2>/dev/null | grep "Time zone" | awk -F': ' '{print $2}' || echo unknown)
 
   echo ""
   echo "======================================"
@@ -330,11 +395,15 @@ show_result() {
   echo "Public Key：$PUBLIC_KEY"
   echo "Short ID：$SHORT_ID"
   echo "节点名称：$NODE_NAME"
+  echo "BBR 拥塞控制：$BBR_CC"
+  echo "BBR 队列算法：$BBR_QDISC"
+  echo "系统时间：$SYSTEM_TIME"
+  echo "系统时区：$SYSTEM_TIMEZONE"
   echo ""
   echo "VLESS 分享链接："
   echo "$VLESS_URL"
   echo ""
-  echo "VLESS 二维码："
+  echo "VLESS 绿色二维码："
   show_qrcode "$VLESS_URL"
   echo ""
   echo "Shadowrocket 手动填写："
@@ -377,13 +446,17 @@ show_result() {
   echo "开机自启：已开启"
   echo ""
   echo "重要提醒："
-  echo "如果客户端连不上，请检查 VPS 云后台安全组是否放行 TCP $VLESS_PORT"
+  echo "1. Reality + Vision + TCP 只需要放行 TCP 端口"
+  echo "2. 如果客户端连不上，请检查 VPS 云后台安全组是否放行 TCP $VLESS_PORT"
+  echo "3. 如果二维码不好扫，请放大终端窗口，或者复制 VLESS 分享链接导入"
+  echo "4. BBR 是网络优化，不是换线路；线路本身差，BBR 也救不了全部问题"
   echo "======================================"
 }
 
 install_reality() {
   check_system
   install_base_packages
+  set_shanghai_time
   install_xray
 
   echo ""
@@ -421,6 +494,7 @@ install_reality() {
   write_xray_config
   test_xray_config
   open_firewall_port "$VLESS_PORT"
+  enable_bbr
   start_xray
   show_result
 }
@@ -435,6 +509,18 @@ show_status() {
   echo ""
   echo "监听端口："
   ss -lntup | grep xray || true
+
+  echo ""
+  echo "BBR 状态："
+  sysctl net.ipv4.tcp_congestion_control 2>/dev/null || true
+  sysctl net.core.default_qdisc 2>/dev/null || true
+
+  echo ""
+  echo "系统时间："
+  date "+%Y-%m-%d %H:%M:%S"
+  timedatectl 2>/dev/null | grep "Time zone" || true
+  timedatectl 2>/dev/null | grep "System clock synchronized" || true
+  timedatectl 2>/dev/null | grep "NTP service" || true
 
   echo ""
   echo "最近日志："
