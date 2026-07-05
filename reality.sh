@@ -9,6 +9,7 @@ XRAY_CONFIG="/usr/local/etc/xray/config.json"
 DEFAULT_SNI="www.paypal.com"
 DEFAULT_FP="chrome"
 DEFAULT_NODE_NAME="VLESS-Reality"
+
 RANDOM_PORT_MIN=10000
 RANDOM_PORT_MAX=65535
 
@@ -31,7 +32,7 @@ check_system() {
     . /etc/os-release
     OS_NAME="$ID"
   else
-    echo "无法识别系统"
+    echo "错误：无法识别系统"
     exit 1
   fi
 
@@ -40,7 +41,7 @@ check_system() {
       echo "系统检测通过：$PRETTY_NAME"
       ;;
     *)
-      echo "当前系统可能不是 Ubuntu / Debian，脚本仍会尝试继续安装"
+      echo "提醒：当前系统可能不是 Ubuntu / Debian，脚本仍会尝试继续安装"
       ;;
   esac
 }
@@ -48,6 +49,7 @@ check_system() {
 install_base_packages() {
   echo ""
   echo "正在安装基础依赖..."
+
   apt update -y
   apt install -y curl wget unzip socat cron ufw net-tools iproute2 procps openssl ca-certificates
 }
@@ -136,48 +138,52 @@ open_firewall_port() {
   if command -v iptables >/dev/null 2>&1; then
     iptables -I INPUT -p tcp --dport "$PORT_TO_OPEN" -j ACCEPT 2>/dev/null || true
   fi
-}
 
-generate_reality_keys() {
-  echo ""
-  echo "正在生成 Reality 密钥..."
-
-  KEY_OUTPUT=$($XRAY_BIN x25519 2>/dev/null || true)
-
-  PRIVATE_KEY=$(echo "$KEY_OUTPUT" | grep -i "^PrivateKey:" | awk '{print $2}')
-  PUBLIC_KEY=$(echo "$KEY_OUTPUT" | grep -i "PublicKey" | awk '{print $3}')
-
-  if [ -z "$PRIVATE_KEY" ]; then
-    PRIVATE_KEY=$(echo "$KEY_OUTPUT" | grep -i "private" | sed 's/.*[: ]//g' | tr -d ' ')
-  fi
-
-  if [ -z "$PUBLIC_KEY" ]; then
-    PUBLIC_KEY=$(echo "$KEY_OUTPUT" | grep -i "public" | sed 's/.*[: ]//g' | tr -d ' ')
-  fi
-
-  if [ -z "$PRIVATE_KEY" ] || [ -z "$PUBLIC_KEY" ]; then
-    echo "错误：Reality 密钥生成失败"
-    echo "Xray 原始输出如下："
-    echo "$KEY_OUTPUT"
-    echo ""
-    echo "请手动执行查看："
-    echo "$XRAY_BIN x25519"
-    exit 1
-  fi
-
-  echo "Reality 密钥生成成功"
+  echo "提醒：如果 VPS 云后台有安全组，也要手动放行 TCP $PORT_TO_OPEN"
 }
 
 generate_uuid() {
   echo ""
   echo "正在生成 UUID..."
 
-  UUID=$($XRAY_BIN uuid)
+  UUID=$($XRAY_BIN uuid 2>&1 | tr -d '[:space:]')
 
   if [ -z "$UUID" ]; then
     echo "错误：UUID 生成失败"
     exit 1
   fi
+
+  echo "UUID 生成成功"
+}
+
+generate_reality_keys() {
+  echo ""
+  echo "正在生成 Reality 密钥..."
+
+  KEY_OUTPUT=$($XRAY_BIN x25519 2>&1 || true)
+
+  PRIVATE_KEY=$(echo "$KEY_OUTPUT" | awk -F': ' '/PrivateKey/ {print $2; exit}')
+  PUBLIC_KEY=$(echo "$KEY_OUTPUT" | awk -F': ' '/PublicKey/ {print $2; exit}')
+
+  PRIVATE_KEY=$(echo "$PRIVATE_KEY" | tr -d '[:space:]')
+  PUBLIC_KEY=$(echo "$PUBLIC_KEY" | tr -d '[:space:]')
+
+  if [ -z "$PRIVATE_KEY" ] || [ -z "$PUBLIC_KEY" ]; then
+    echo "错误：Reality 密钥生成失败"
+    echo ""
+    echo "Xray 原始输出如下："
+    echo "$KEY_OUTPUT"
+    echo ""
+    echo "解析结果："
+    echo "PRIVATE_KEY=$PRIVATE_KEY"
+    echo "PUBLIC_KEY=$PUBLIC_KEY"
+    echo ""
+    echo "请手动执行排查："
+    echo "$XRAY_BIN x25519"
+    exit 1
+  fi
+
+  echo "Reality 密钥生成成功"
 }
 
 backup_old_config() {
@@ -355,6 +361,9 @@ show_result() {
   echo ""
   echo "配置文件：$XRAY_CONFIG"
   echo "开机自启：已开启"
+  echo ""
+  echo "重要提醒："
+  echo "如果客户端连不上，请检查 VPS 云后台安全组是否放行 TCP $VLESS_PORT"
   echo "======================================"
 }
 
@@ -392,6 +401,7 @@ install_reality() {
 
   generate_uuid
   generate_reality_keys
+
   SHORT_ID=$(random_short_id)
 
   write_xray_config
