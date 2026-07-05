@@ -113,12 +113,8 @@ validate_port() {
   fi
 
   if [ "$PORT_TO_CHECK" -lt 10000 ]; then
-    echo "提醒：你设置的端口低于 10000，不建议使用"
-    read -p "是否继续使用该端口？输入 y 继续: " CONTINUE_LOW_PORT
-    if [ "$CONTINUE_LOW_PORT" != "y" ]; then
-      echo "已取消，请重新运行脚本并选择更高端口"
-      exit 1
-    fi
+    echo "错误：端口不能低于 10000"
+    exit 1
   fi
 
   if ss -lntup | grep -q ":$PORT_TO_CHECK "; then
@@ -146,15 +142,30 @@ generate_reality_keys() {
   echo ""
   echo "正在生成 Reality 密钥..."
 
-  KEY_OUTPUT=$($XRAY_BIN x25519)
+  KEY_OUTPUT=$($XRAY_BIN x25519 2>/dev/null || true)
 
-  PRIVATE_KEY=$(echo "$KEY_OUTPUT" | grep "Private key" | awk '{print $3}')
-  PUBLIC_KEY=$(echo "$KEY_OUTPUT" | grep "Public key" | awk '{print $3}')
+  PRIVATE_KEY=$(echo "$KEY_OUTPUT" | grep -i "^PrivateKey:" | awk '{print $2}')
+  PUBLIC_KEY=$(echo "$KEY_OUTPUT" | grep -i "PublicKey" | awk '{print $3}')
+
+  if [ -z "$PRIVATE_KEY" ]; then
+    PRIVATE_KEY=$(echo "$KEY_OUTPUT" | grep -i "private" | sed 's/.*[: ]//g' | tr -d ' ')
+  fi
+
+  if [ -z "$PUBLIC_KEY" ]; then
+    PUBLIC_KEY=$(echo "$KEY_OUTPUT" | grep -i "public" | sed 's/.*[: ]//g' | tr -d ' ')
+  fi
 
   if [ -z "$PRIVATE_KEY" ] || [ -z "$PUBLIC_KEY" ]; then
     echo "错误：Reality 密钥生成失败"
+    echo "Xray 原始输出如下："
+    echo "$KEY_OUTPUT"
+    echo ""
+    echo "请手动执行查看："
+    echo "$XRAY_BIN x25519"
     exit 1
   fi
+
+  echo "Reality 密钥生成成功"
 }
 
 generate_uuid() {
@@ -362,7 +373,7 @@ install_reality() {
   MODE=${MODE:-2}
 
   if [ "$MODE" = "1" ]; then
-    read -p "请输入端口，例如 443 或 31566: " VLESS_PORT
+    read -p "请输入端口，必须 >=10000，例如 31566: " VLESS_PORT
     read -p "请输入 SNI 域名，默认 $DEFAULT_SNI: " SNI_DOMAIN
     read -p "请输入浏览器指纹，默认 $DEFAULT_FP: " FINGERPRINT
     read -p "请输入节点名称，默认 $DEFAULT_NODE_NAME: " NODE_NAME
